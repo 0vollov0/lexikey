@@ -44,6 +44,48 @@ function SoundIcon({ className }: { className?: string }) {
   );
 }
 
+function SwipeIcon({
+  className,
+  direction,
+}: {
+  className?: string;
+  direction: "left" | "right";
+}) {
+  if (direction === "left") {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+        aria-hidden="true"
+      >
+        <path d="M19 12H7" />
+        <path d="m11 8-4 4 4 4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M5 12h12" />
+      <path d="m13 8 4 4-4 4" />
+    </svg>
+  );
+}
+
 export function VocabularyTrainer() {
   const dispatch = useAppDispatch();
   const activeCard = useAppSelector(selectActiveCard);
@@ -116,6 +158,7 @@ export function VocabularyTrainer() {
       : speechTarget === "example"
         ? "예문 재생 중..."
         : "");
+  const canSwipeWithButtons = !loading && !isAnimatingOut && Boolean(activeCard);
 
   async function onCompleteCard(cardId: string) {
     const response = await fetch(`/api/words/${cardId}/complete`, {
@@ -363,13 +406,27 @@ export function VocabularyTrainer() {
               </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs text-[#6a5d4b]">
-              <div className="rounded-lg border border-[#d7c3a0] bg-white/70 py-2">
-                좌측 스와이프: 학습 유지
-              </div>
-              <div className="rounded-lg border border-[#d7c3a0] bg-white/70 py-2">
-                우측 스와이프: 암기 완료
-              </div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                aria-label="왼쪽 스와이프: 학습 유지"
+                title="왼쪽 스와이프: 학습 유지"
+                onClick={() => void applySwipe("left")}
+                disabled={!canSwipeWithButtons}
+                className="inline-flex h-12 items-center justify-center rounded-xl border border-[#d7c3a0] bg-white/80 text-[#6a5d4b] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <SwipeIcon direction="left" className="h-6 w-6" />
+              </button>
+              <button
+                type="button"
+                aria-label="오른쪽 스와이프: 암기 완료"
+                title="오른쪽 스와이프: 암기 완료"
+                onClick={() => void applySwipe("right")}
+                disabled={!canSwipeWithButtons}
+                className="inline-flex h-12 items-center justify-center rounded-xl border border-[#d7c3a0] bg-white/80 text-[#4e6b2b] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <SwipeIcon direction="right" className="h-6 w-6" />
+              </button>
             </div>
           </section>
         ) : null}
