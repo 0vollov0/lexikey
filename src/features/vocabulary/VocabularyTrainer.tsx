@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type PointerEvent } from "react";
 import type { VocabularyCard } from "@/features/vocabulary/types";
 import {
   markCurrentCardCompleted,
@@ -18,11 +18,31 @@ const SWIPE_THRESHOLD = 110;
 const OUT_ANIMATION_MS = 210;
 
 type SwipeDirection = "left" | "right";
+type SpeechTarget = "word" | "example" | null;
 
 type WordsApiResponse = {
   cards: VocabularyCard[];
   error?: string;
 };
+
+function SoundIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+      <path d="M15.5 9.5a4.5 4.5 0 0 1 0 5" />
+      <path d="M18.5 7a8 8 0 0 1 0 10" />
+    </svg>
+  );
+}
 
 export function VocabularyTrainer() {
   const dispatch = useAppDispatch();
@@ -33,6 +53,8 @@ export function VocabularyTrainer() {
   const [startX, setStartX] = useState<number | null>(null);
   const [offsetX, setOffsetX] = useState(0);
   const [isAnimatingOut, setIsAnimatingOut] = useState(false);
+  const [speechTarget, setSpeechTarget] = useState<SpeechTarget>(null);
+  const [speechMessage, setSpeechMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -72,12 +94,28 @@ export function VocabularyTrainer() {
     return () => controller.abort();
   }, [dispatch]);
 
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
   const cardProgress = useMemo(() => {
     if (cards.length === 0) {
       return 0;
     }
     return Math.min(((currentIndex + 1) / cards.length) * 100, 100);
   }, [cards.length, currentIndex]);
+
+  const speechStatusText =
+    speechMessage ??
+    (speechTarget === "word"
+      ? "단어 재생 중..."
+      : speechTarget === "example"
+        ? "예문 재생 중..."
+        : "");
 
   async function onCompleteCard(cardId: string) {
     const response = await fetch(`/api/words/${cardId}/complete`, {
@@ -153,6 +191,40 @@ export function VocabularyTrainer() {
     setOffsetX(0);
   }
 
+  function handleVoiceButtonPointerDown(
+    event: PointerEvent<HTMLButtonElement>,
+  ) {
+    event.stopPropagation();
+  }
+
+  function speakText(text: string, target: Exclude<SpeechTarget, null>) {
+    setSpeechMessage(null);
+
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      setSpeechMessage("이 브라우저는 음성 읽기를 지원하지 않습니다.");
+      return;
+    }
+
+    const normalized = text.trim();
+    if (!normalized) {
+      setSpeechMessage("읽을 문장이 없습니다.");
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(normalized);
+    utterance.lang = "en-US";
+    utterance.rate = 0.95;
+    utterance.pitch = 1;
+    utterance.onstart = () => setSpeechTarget(target);
+    utterance.onend = () => setSpeechTarget(null);
+    utterance.onerror = () => {
+      setSpeechTarget(null);
+      setSpeechMessage("음성 재생에 실패했습니다.");
+    };
+    window.speechSynthesis.speak(utterance);
+  }
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#fff3dd_0%,_#f6ead3_45%,_#efe0c4_100%)] px-4 pb-10 pt-6 text-[#2d2923] sm:px-6">
       <section className="mx-auto flex w-full max-w-md flex-col gap-4">
@@ -207,7 +279,7 @@ export function VocabularyTrainer() {
         {!loading && !errorMessage && activeCard ? (
           <section className="pt-2">
             <div
-              className="select-none touch-none rounded-3xl border border-[#d7c3a0] bg-white px-5 pb-6 pt-5 shadow-[0_15px_45px_rgba(89,63,17,0.18)] transition-transform duration-200"
+              className="select-none touch-none rounded-3xl border border-[#d7c3a0] bg-white px-5 pb-8 pt-5 shadow-[0_15px_45px_rgba(89,63,17,0.18)] transition-transform duration-200"
               onPointerDown={(event) => handlePointerDown(event.clientX)}
               onPointerMove={(event) => handlePointerMove(event.clientX)}
               onPointerUp={handlePointerEnd}
@@ -227,9 +299,24 @@ export function VocabularyTrainer() {
                 </span>
               </div>
 
-              <p className="mt-8 text-center text-[2.3rem] font-semibold leading-tight tracking-tight text-[#2f2922]">
-                {activeCard.word}
-              </p>
+              <div className="relative mt-8">
+                <button
+                  type="button"
+                  aria-label="단어 듣기"
+                  title="단어 듣기"
+                  onPointerDown={handleVoiceButtonPointerDown}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    speakText(activeCard.word, "word");
+                  }}
+                  className="absolute right-0 top-0 inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#d7c3a0] bg-[#fff8ef] text-[#5f564a]"
+                >
+                  <SoundIcon className="h-5 w-5" />
+                </button>
+                <p className="pr-12 text-center text-[2.3rem] font-semibold leading-tight tracking-tight text-[#2f2922]">
+                  {activeCard.word}
+                </p>
+              </div>
 
               <div className="mt-8 rounded-2xl border border-[#e7d4b5] bg-[#fef8ef] px-4 py-4">
                 {isMeaningVisible ? (
@@ -237,15 +324,42 @@ export function VocabularyTrainer() {
                     <p className="text-base font-medium text-[#2f2922]">
                       뜻: {activeCard.meaning}
                     </p>
-                    <p className="text-sm leading-7 text-[#5f564a]">
-                      예문: {activeCard.example || "-"}
-                    </p>
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm leading-7 text-[#5f564a]">
+                        예문: {activeCard.example || "-"}
+                      </p>
+                      {activeCard.example.trim().length > 0 ? (
+                        <button
+                          type="button"
+                          aria-label="예문 듣기"
+                          title="예문 듣기"
+                          onPointerDown={handleVoiceButtonPointerDown}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            speakText(activeCard.example, "example");
+                          }}
+                          className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#d7c3a0] bg-white text-[#5f564a]"
+                        >
+                          <SoundIcon className="h-4 w-4" />
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 ) : (
                   <p className="text-sm leading-7 text-[#776a59]">
                     카드를 탭하면 뜻과 예문이 표시됩니다.
                   </p>
                 )}
+              </div>
+
+              <div className="mt-4 min-h-10 rounded-xl border border-[#e7d4b5] bg-[#fff8ef] px-3 py-2">
+                <p
+                  className={`text-center text-xs ${
+                    speechMessage ? "text-[#8f3c2a]" : "text-[#6f644f]"
+                  } ${speechStatusText ? "" : "opacity-0"}`}
+                >
+                  {speechStatusText || "상태"}
+                </p>
               </div>
             </div>
 
