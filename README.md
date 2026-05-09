@@ -8,11 +8,37 @@ Next.js, Tailwind CSS, and Redux Toolkit.
 Install dependencies and run the development server:
 
 ```bash
-npm install
-npm run dev
+yarn install
+yarn dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+## Notion Integration
+
+Set the following environment variables in `.env.local`:
+
+```bash
+NOTION_API_TOKEN=your_notion_integration_token
+NOTION_DATABASE_ID=your_notion_database_id
+```
+
+Database columns (property names) must be:
+
+- `단어`
+- `뜻`
+- `품사`
+- `예문`
+- `암기 상태` (`학습 필요`, `완료`)
+
+Then share the database with your Notion integration.
+
+## Mobile Learning Flow
+
+- Initial load: fetches `학습 필요` cards from Notion in random order
+- Card tap: reveals `단어`, `뜻`, `예문`
+- Swipe left: keeps card as `학습 필요` and moves to next card
+- Swipe right: updates card to `완료` in Notion and removes it from deck
 
 ## Stack
 
@@ -24,18 +50,18 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## Project Structure
 
-- `src/app/providers.tsx` wires Redux into the App Router.
-- `src/lib/store.ts` creates the Redux store.
-- `src/lib/hooks.ts` exports typed Redux hooks.
-- `src/features/vocabulary/` contains the starter vocabulary feature.
+- `src/app/api/words/route.ts` loads learning cards from Notion.
+- `src/app/api/words/[pageId]/complete/route.ts` marks cards as completed.
+- `src/lib/notion.ts` handles Notion API calls.
+- `src/features/vocabulary/` contains mobile swipe-card UI and Redux state.
 
 ## Scripts
 
 ```bash
-npm run dev
-npm run build
-npm run start
-npm run lint
+yarn dev
+yarn build
+yarn start
+yarn lint
 ```
 
 ## GitHub

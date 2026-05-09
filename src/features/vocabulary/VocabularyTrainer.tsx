@@ -1,144 +1,264 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
+import type { VocabularyCard } from "@/features/vocabulary/types";
 import {
-  nextCard,
-  previousCard,
-  revealAnswer,
+  markCurrentCardCompleted,
+  moveToNextCard,
+  revealMeaning,
   selectActiveCard,
   selectVocabulary,
-  toggleMastered,
+  setCards,
+  setErrorMessage,
+  setLoading,
 } from "@/features/vocabulary/vocabularySlice";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
+
+const SWIPE_THRESHOLD = 110;
+const OUT_ANIMATION_MS = 210;
+
+type SwipeDirection = "left" | "right";
+
+type WordsApiResponse = {
+  cards: VocabularyCard[];
+  error?: string;
+};
 
 export function VocabularyTrainer() {
   const dispatch = useAppDispatch();
   const activeCard = useAppSelector(selectActiveCard);
-  const { activeIndex, cards, isAnswerVisible, masteredIds, studyStreak } =
+  const { cards, completedCount, currentIndex, errorMessage, isMeaningVisible, loading } =
     useAppSelector(selectVocabulary);
-  const masteredCount = masteredIds.length;
-  const isMastered = masteredIds.includes(activeCard.id);
+
+  const [startX, setStartX] = useState<number | null>(null);
+  const [offsetX, setOffsetX] = useState(0);
+  const [isAnimatingOut, setIsAnimatingOut] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadCards() {
+      dispatch(setLoading(true));
+      dispatch(setErrorMessage(null));
+
+      try {
+        const response = await fetch("/api/words", {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const data = (await response.json()) as WordsApiResponse;
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "단어장을 불러오지 못했습니다.");
+        }
+
+        dispatch(setCards(data.cards));
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        const message =
+          error instanceof Error ? error.message : "단어장을 불러오지 못했습니다.";
+        dispatch(setErrorMessage(message));
+      } finally {
+        if (!controller.signal.aborted) {
+          dispatch(setLoading(false));
+        }
+      }
+    }
+
+    void loadCards();
+
+    return () => controller.abort();
+  }, [dispatch]);
+
+  const cardProgress = useMemo(() => {
+    if (cards.length === 0) {
+      return 0;
+    }
+    return Math.min(((currentIndex + 1) / cards.length) * 100, 100);
+  }, [cards.length, currentIndex]);
+
+  async function onCompleteCard(cardId: string) {
+    const response = await fetch(`/api/words/${cardId}/complete`, {
+      method: "PATCH",
+    });
+
+    if (!response.ok) {
+      const data = (await response.json()) as { error?: string };
+      throw new Error(data.error ?? "암기 완료 상태를 저장하지 못했습니다.");
+    }
+  }
+
+  async function applySwipe(direction: SwipeDirection) {
+    if (!activeCard || isAnimatingOut) {
+      return;
+    }
+
+    setIsAnimatingOut(true);
+    setOffsetX(direction === "right" ? 430 : -430);
+
+    setTimeout(async () => {
+      try {
+        if (direction === "right") {
+          await onCompleteCard(activeCard.id);
+          dispatch(markCurrentCardCompleted());
+        } else {
+          dispatch(moveToNextCard());
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "카드 상태를 업데이트하지 못했습니다.";
+        dispatch(setErrorMessage(message));
+      } finally {
+        setOffsetX(0);
+        setStartX(null);
+        setIsAnimatingOut(false);
+      }
+    }, OUT_ANIMATION_MS);
+  }
+
+  function handlePointerDown(clientX: number) {
+    if (!activeCard || isAnimatingOut) {
+      return;
+    }
+    setStartX(clientX);
+  }
+
+  function handlePointerMove(clientX: number) {
+    if (startX === null || isAnimatingOut) {
+      return;
+    }
+    setOffsetX(clientX - startX);
+  }
+
+  function handlePointerEnd() {
+    if (startX === null || isAnimatingOut) {
+      return;
+    }
+
+    const delta = offsetX;
+    setStartX(null);
+
+    if (delta >= SWIPE_THRESHOLD) {
+      void applySwipe("right");
+      return;
+    }
+
+    if (delta <= -SWIPE_THRESHOLD) {
+      void applySwipe("left");
+      return;
+    }
+
+    setOffsetX(0);
+  }
 
   return (
-    <main className="min-h-screen bg-[#f7f7f2] text-[#171717]">
-      <section className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 py-8 sm:px-8 lg:px-10">
-        <header className="flex flex-col gap-5 border-b border-[#d8d2bf] pb-6 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium uppercase tracking-[0.16em] text-[#5b6b73]">
-              LexiKey
-            </p>
-            <h1 className="mt-3 max-w-2xl text-4xl font-semibold leading-tight text-[#20231f] sm:text-5xl">
-              Build vocabulary around memorable keywords.
-            </h1>
-          </div>
-          <div className="grid grid-cols-2 gap-3 text-sm sm:w-72">
-            <div className="border border-[#d8d2bf] bg-white px-4 py-3">
-              <span className="block text-[#68716b]">Cards</span>
-              <strong className="text-2xl">{cards.length}</strong>
-            </div>
-            <div className="border border-[#d8d2bf] bg-white px-4 py-3">
-              <span className="block text-[#68716b]">Mastered</span>
-              <strong className="text-2xl">{masteredCount}</strong>
-            </div>
-          </div>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#fff3dd_0%,_#f6ead3_45%,_#efe0c4_100%)] px-4 pb-10 pt-6 text-[#2d2923] sm:px-6">
+      <section className="mx-auto flex w-full max-w-md flex-col gap-4">
+        <header className="rounded-2xl border border-[#d7c3a0] bg-white/70 px-4 py-4 backdrop-blur-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#8d5f2e]">
+            LexiKey
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold leading-tight">
+            Notion 단어장 스와이프 학습
+          </h1>
+          <p className="mt-2 text-sm text-[#5f564a]">
+            오른쪽: 완료, 왼쪽: 학습 유지 후 다음 카드
+          </p>
         </header>
 
-        <div className="grid flex-1 gap-6 py-8 lg:grid-cols-[1fr_340px]">
-          <article className="flex min-h-[460px] flex-col justify-between border border-[#d8d2bf] bg-white p-6 shadow-sm sm:p-8">
-            <div className="flex items-center justify-between gap-4">
-              <span className="border border-[#2f5d50] px-3 py-1 text-sm font-medium text-[#2f5d50]">
-                {activeCard.keyword}
-              </span>
-              <span className="text-sm text-[#68716b]">
-                {activeIndex + 1} / {cards.length}
-              </span>
-            </div>
+        <div className="rounded-xl border border-[#d7c3a0] bg-white/75 px-4 py-3">
+          <div className="flex items-center justify-between text-sm">
+            <span>남은 카드 {cards.length}개</span>
+            <span>완료 {completedCount}개</span>
+          </div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-[#ead8ba]">
+            <div
+              className="h-full rounded-full bg-[#cc7a2b] transition-all duration-200"
+              style={{ width: `${cardProgress}%` }}
+            />
+          </div>
+        </div>
 
-            <div className="my-12">
-              <p className="text-sm font-medium uppercase tracking-[0.18em] text-[#b4532a]">
-                Word
-              </p>
-              <h2 className="mt-4 text-6xl font-semibold tracking-normal text-[#20231f] sm:text-7xl">
+        {loading ? (
+          <section className="mt-8 rounded-2xl border border-[#d7c3a0] bg-white p-6 text-center text-[#5f564a]">
+            단어장을 불러오는 중입니다...
+          </section>
+        ) : null}
+
+        {!loading && errorMessage ? (
+          <section className="mt-8 rounded-2xl border border-[#db8c77] bg-[#fff4f1] p-6 text-center text-[#7d2f1f]">
+            {errorMessage}
+          </section>
+        ) : null}
+
+        {!loading && !errorMessage && cards.length === 0 ? (
+          <section className="mt-8 rounded-2xl border border-[#c7dab0] bg-[#f4fde9] p-7 text-center">
+            <h2 className="text-xl font-semibold text-[#294d13]">
+              학습 필요 카드가 없습니다.
+            </h2>
+            <p className="mt-2 text-sm text-[#4f6f38]">
+              Notion에서 암기 상태가 학습 필요인 단어를 추가해 주세요.
+            </p>
+          </section>
+        ) : null}
+
+        {!loading && !errorMessage && activeCard ? (
+          <section className="pt-2">
+            <div
+              className="select-none touch-none rounded-3xl border border-[#d7c3a0] bg-white px-5 pb-6 pt-5 shadow-[0_15px_45px_rgba(89,63,17,0.18)] transition-transform duration-200"
+              onPointerDown={(event) => handlePointerDown(event.clientX)}
+              onPointerMove={(event) => handlePointerMove(event.clientX)}
+              onPointerUp={handlePointerEnd}
+              onPointerCancel={handlePointerEnd}
+              onClick={() => dispatch(revealMeaning())}
+              style={{
+                transform: `translateX(${offsetX}px) rotate(${offsetX * 0.04}deg)`,
+                transition: isAnimatingOut ? `transform ${OUT_ANIMATION_MS}ms ease-out` : "none",
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="rounded-full border border-[#d3b48f] bg-[#fff8ef] px-3 py-1 text-xs font-medium text-[#7a5a31]">
+                  {activeCard.partOfSpeech || "품사 없음"}
+                </span>
+                <span className="text-xs text-[#8f7e68]">
+                  {cards.length === 0 ? 0 : currentIndex + 1}/{cards.length}
+                </span>
+              </div>
+
+              <p className="mt-8 text-center text-[2.3rem] font-semibold leading-tight tracking-tight text-[#2f2922]">
                 {activeCard.word}
-              </h2>
-              <div className="mt-10 min-h-32 border-l-4 border-[#e0a458] pl-5">
-                {isAnswerVisible ? (
-                  <div className="space-y-4">
-                    <p className="text-2xl font-medium text-[#20231f]">
-                      {activeCard.meaning}
+              </p>
+
+              <div className="mt-8 rounded-2xl border border-[#e7d4b5] bg-[#fef8ef] px-4 py-4">
+                {isMeaningVisible ? (
+                  <div className="space-y-3">
+                    <p className="text-base font-medium text-[#2f2922]">
+                      뜻: {activeCard.meaning}
                     </p>
-                    <p className="max-w-2xl text-lg leading-8 text-[#5b625c]">
-                      {activeCard.example}
+                    <p className="text-sm leading-7 text-[#5f564a]">
+                      예문: {activeCard.example || "-"}
                     </p>
                   </div>
                 ) : (
-                  <p className="max-w-xl text-lg leading-8 text-[#68716b]">
-                    Think of the keyword first, then reveal the meaning when
-                    you can explain it in your own words.
+                  <p className="text-sm leading-7 text-[#776a59]">
+                    카드를 탭하면 뜻과 예문이 표시됩니다.
                   </p>
                 )}
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <button
-                className="h-12 border border-[#a9a18d] px-5 font-medium text-[#20231f] transition hover:bg-[#f1eee4]"
-                type="button"
-                onClick={() => dispatch(previousCard())}
-              >
-                Previous
-              </button>
-              <button
-                className="h-12 bg-[#2f5d50] px-5 font-medium text-white transition hover:bg-[#254a40]"
-                type="button"
-                onClick={() => dispatch(revealAnswer())}
-              >
-                Reveal Meaning
-              </button>
-              <button
-                className="h-12 border border-[#a9a18d] px-5 font-medium text-[#20231f] transition hover:bg-[#f1eee4]"
-                type="button"
-                onClick={() => dispatch(nextCard())}
-              >
-                Next
-              </button>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs text-[#6a5d4b]">
+              <div className="rounded-lg border border-[#d7c3a0] bg-white/70 py-2">
+                좌측 스와이프: 학습 유지
+              </div>
+              <div className="rounded-lg border border-[#d7c3a0] bg-white/70 py-2">
+                우측 스와이프: 암기 완료
+              </div>
             </div>
-          </article>
-
-          <aside className="flex flex-col gap-4">
-            <div className="border border-[#d8d2bf] bg-[#20231f] p-6 text-white">
-              <p className="text-sm uppercase tracking-[0.16em] text-[#e0a458]">
-                Study streak
-              </p>
-              <p className="mt-5 text-5xl font-semibold">{studyStreak}</p>
-              <p className="mt-2 text-sm text-[#d8d2bf]">
-                day starter state wired through Redux.
-              </p>
-            </div>
-
-            <div className="border border-[#d8d2bf] bg-white p-6">
-              <h2 className="text-lg font-semibold">Current focus</h2>
-              <dl className="mt-5 space-y-4 text-sm">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-[#68716b]">Keyword</dt>
-                  <dd className="font-medium">{activeCard.keyword}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-[#68716b]">Status</dt>
-                  <dd className="font-medium">
-                    {isMastered ? "Mastered" : "Learning"}
-                  </dd>
-                </div>
-              </dl>
-              <button
-                className="mt-6 h-11 w-full border border-[#b4532a] px-4 font-medium text-[#b4532a] transition hover:bg-[#fff4ed]"
-                type="button"
-                onClick={() => dispatch(toggleMastered(activeCard.id))}
-              >
-                {isMastered ? "Mark as Learning" : "Mark as Mastered"}
-              </button>
-            </div>
-          </aside>
-        </div>
+          </section>
+        ) : null}
       </section>
     </main>
   );
