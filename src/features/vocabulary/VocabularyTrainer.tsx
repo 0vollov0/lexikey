@@ -3,14 +3,17 @@
 import { useEffect, useMemo, useState, type PointerEvent } from "react";
 import type { VocabularyCard } from "@/features/vocabulary/types";
 import {
-  markCurrentCardCompleted,
+  markCurrentCardCompletedLocal,
   moveToNextCard,
+  removeSyncedIds,
   revealMeaning,
   selectActiveCard,
   selectVocabulary,
   setCards,
   setErrorMessage,
   setLoading,
+  setSyncMessage,
+  setSyncing,
 } from "@/features/vocabulary/vocabularySlice";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 
@@ -22,6 +25,12 @@ type SpeechTarget = "word" | "example" | null;
 
 type WordsApiResponse = {
   cards: VocabularyCard[];
+  error?: string;
+};
+
+type SyncApiResponse = {
+  syncedIds: string[];
+  failedIds: string[];
   error?: string;
 };
 
@@ -86,11 +95,38 @@ function SwipeIcon({
   );
 }
 
+function SyncIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  );
+}
+
 export function VocabularyTrainer() {
   const dispatch = useAppDispatch();
   const activeCard = useAppSelector(selectActiveCard);
-  const { cards, completedCount, currentIndex, errorMessage, isMeaningVisible, loading } =
-    useAppSelector(selectVocabulary);
+  const {
+    cards,
+    completedCount,
+    currentIndex,
+    errorMessage,
+    isMeaningVisible,
+    loading,
+    pendingSyncIds,
+    syncing,
+    syncMessage,
+  } = useAppSelector(selectVocabulary);
 
   const [startX, setStartX] = useState<number | null>(null);
   const [offsetX, setOffsetX] = useState(0);
@@ -158,18 +194,9 @@ export function VocabularyTrainer() {
       : speechTarget === "example"
         ? "예문 재생 중..."
         : "");
-  const canSwipeWithButtons = !loading && !isAnimatingOut && Boolean(activeCard);
-
-  async function onCompleteCard(cardId: string) {
-    const response = await fetch(`/api/words/${cardId}/complete`, {
-      method: "PATCH",
-    });
-
-    if (!response.ok) {
-      const data = (await response.json()) as { error?: string };
-      throw new Error(data.error ?? "암기 완료 상태를 저장하지 못했습니다.");
-    }
-  }
+  const canSwipeWithButtons =
+    !loading && !isAnimatingOut && Boolean(activeCard) && !syncing;
+  const canSync = pendingSyncIds.length > 0 && !syncing;
 
   async function applySwipe(direction: SwipeDirection) {
     if (!activeCard || isAnimatingOut) {
@@ -182,8 +209,7 @@ export function VocabularyTrainer() {
     setTimeout(async () => {
       try {
         if (direction === "right") {
-          await onCompleteCard(activeCard.id);
-          dispatch(markCurrentCardCompleted());
+          dispatch(markCurrentCardCompletedLocal());
         } else {
           dispatch(moveToNextCard());
         }
@@ -197,6 +223,48 @@ export function VocabularyTrainer() {
         setIsAnimatingOut(false);
       }
     }, OUT_ANIMATION_MS);
+  }
+
+  async function syncCompletedCards() {
+    if (!canSync) {
+      return;
+    }
+
+    dispatch(setSyncing(true));
+    dispatch(setSyncMessage(null));
+
+    try {
+      const response = await fetch("/api/words/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pageIds: pendingSyncIds }),
+      });
+      const data = (await response.json()) as SyncApiResponse;
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "동기화 요청에 실패했습니다.");
+      }
+
+      if (data.syncedIds.length > 0) {
+        dispatch(removeSyncedIds(data.syncedIds));
+      }
+
+      if (data.failedIds.length > 0) {
+        dispatch(
+          setSyncMessage(
+            `${data.syncedIds.length}개 동기화, ${data.failedIds.length}개 실패`,
+          ),
+        );
+      } else {
+        dispatch(setSyncMessage(`${data.syncedIds.length}개 동기화 완료`));
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "동기화 중 오류가 발생했습니다.";
+      dispatch(setSyncMessage(message));
+    } finally {
+      dispatch(setSyncing(false));
+    }
   }
 
   function handlePointerDown(clientX: number) {
@@ -284,7 +352,7 @@ export function VocabularyTrainer() {
         </header>
 
         <div className="rounded-xl border border-[#d7c3a0] bg-white/75 px-4 py-3">
-          <div className="flex items-center justify-between text-sm">
+          <div className="flex items-center justify-between gap-3 text-sm">
             <span>남은 카드 {cards.length}개</span>
             <span>완료 {completedCount}개</span>
           </div>
@@ -293,6 +361,27 @@ export function VocabularyTrainer() {
               className="h-full rounded-full bg-[#cc7a2b] transition-all duration-200"
               style={{ width: `${cardProgress}%` }}
             />
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <p className="text-xs text-[#6d5d47]">
+              미동기화 완료: {pendingSyncIds.length}개
+            </p>
+            <button
+              type="button"
+              aria-label="완료 카드 동기화"
+              title="완료 카드 동기화"
+              onClick={() => void syncCompletedCards()}
+              disabled={!canSync}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-[#d7c3a0] bg-white px-3 text-xs font-medium text-[#5f564a] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <SyncIcon className="h-4 w-4" />
+              {syncing ? "동기화 중..." : "동기화"}
+            </button>
+          </div>
+          <div className="mt-2 min-h-5">
+            <p className={`text-xs text-[#6d5d47] ${syncMessage ? "" : "opacity-0"}`}>
+              {syncMessage || "동기화 상태"}
+            </p>
           </div>
         </div>
 
@@ -333,10 +422,23 @@ export function VocabularyTrainer() {
                 transition: isAnimatingOut ? `transform ${OUT_ANIMATION_MS}ms ease-out` : "none",
               }}
             >
-              <div className="flex items-center justify-between">
-                <span className="rounded-full border border-[#d3b48f] bg-[#fff8ef] px-3 py-1 text-xs font-medium text-[#7a5a31]">
-                  {activeCard.partOfSpeech || "품사 없음"}
-                </span>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {activeCard.partsOfSpeech.length > 0 ? (
+                    activeCard.partsOfSpeech.map((part) => (
+                      <span
+                        key={part}
+                        className="rounded-full border border-[#d3b48f] bg-[#fff8ef] px-3 py-1 text-xs font-medium text-[#7a5a31]"
+                      >
+                        {part}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="rounded-full border border-[#d3b48f] bg-[#fff8ef] px-3 py-1 text-xs font-medium text-[#7a5a31]">
+                      품사 없음
+                    </span>
+                  )}
+                </div>
                 <span className="text-xs text-[#8f7e68]">
                   {cards.length === 0 ? 0 : currentIndex + 1}/{cards.length}
                 </span>

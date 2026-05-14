@@ -4,7 +4,7 @@ export type VocabularyCard = {
   id: string;
   word: string;
   meaning: string;
-  partOfSpeech: string;
+  partsOfSpeech: string[];
   example: string;
   status: MemorizationStatus;
 };

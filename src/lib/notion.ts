@@ -111,10 +111,38 @@ function normalizeStatus(raw: string): MemorizationStatus {
   return raw === COMPLETED_STATUS ? COMPLETED_STATUS : LEARNING_STATUS;
 }
 
+function toPartsOfSpeech(value: NotionProperty | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  if (value.type === "multi_select") {
+    const multiSelect = value.multi_select as { name?: string }[] | undefined;
+    return (multiSelect ?? [])
+      .map((item) => item.name?.trim() ?? "")
+      .filter((name) => name.length > 0);
+  }
+
+  if (value.type === "select") {
+    const select = value.select as { name?: string } | null | undefined;
+    return select?.name ? [select.name] : [];
+  }
+
+  const raw = toText(value);
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split(/[,\uFF0C/|]/g)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 function mapPageToCard(page: NotionPage): VocabularyCard {
   const word = toText(page.properties["단어"]);
   const meaning = toText(page.properties["뜻"]);
-  const partOfSpeech = toText(page.properties["품사"]);
+  const partsOfSpeech = toPartsOfSpeech(page.properties["품사"]);
   const example = toText(page.properties["예문"]);
   const status = normalizeStatus(toText(page.properties["암기 상태"]));
 
@@ -122,7 +150,7 @@ function mapPageToCard(page: NotionPage): VocabularyCard {
     id: page.id,
     word,
     meaning,
-    partOfSpeech,
+    partsOfSpeech,
     example,
     status,
   };
@@ -232,4 +260,24 @@ export async function markWordAsCompleted(pageId: string): Promise<void> {
 
     throw error;
   }
+}
+
+export async function markWordsAsCompleted(pageIds: string[]): Promise<{
+  syncedIds: string[];
+  failedIds: string[];
+}> {
+  const uniquePageIds = [...new Set(pageIds)];
+  const syncedIds: string[] = [];
+  const failedIds: string[] = [];
+
+  for (const pageId of uniquePageIds) {
+    try {
+      await markWordAsCompleted(pageId);
+      syncedIds.push(pageId);
+    } catch {
+      failedIds.push(pageId);
+    }
+  }
+
+  return { syncedIds, failedIds };
 }

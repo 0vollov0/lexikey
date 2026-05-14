@@ -27,7 +27,7 @@ Database columns (property names) must be:
 
 - `단어`
 - `뜻`
-- `품사`
+- `품사` (복수 값 허용, multi_select 권장)
 - `예문`
 - `암기 상태` (`학습 필요`, `완료`)
 
@@ -38,7 +38,8 @@ Then share the database with your Notion integration.
 - Initial load: fetches `학습 필요` cards from Notion in random order
 - Card tap: reveals `단어`, `뜻`, `예문`
 - Swipe left: keeps card as `학습 필요` and moves to next card
-- Swipe right: updates card to `완료` in Notion and removes it from deck
+- Swipe right: stores `완료` target locally and removes card from deck
+- Sync button: sends locally completed IDs to Notion in batch
 
 ## Stack
 
@@ -51,7 +52,7 @@ Then share the database with your Notion integration.
 ## Project Structure
 
 - `src/app/api/words/route.ts` loads learning cards from Notion.
-- `src/app/api/words/[pageId]/complete/route.ts` marks cards as completed.
+- `src/app/api/words/sync/route.ts` syncs locally completed cards in batch.
 - `src/lib/notion.ts` handles Notion API calls.
 - `src/features/vocabulary/` contains mobile swipe-card UI and Redux state.
 
